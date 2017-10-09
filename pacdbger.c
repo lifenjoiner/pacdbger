@@ -282,7 +282,7 @@ typedef struct CScriptSite { // :IActiveScriptSite
     CJSProxy    *pCJSProxy;     // :IDispatch
     IDispatch   *pJScriptDisp;  //!!!
     DISPID      ScriptDispId;   //"FindProxyForURL"
-    DISPID      ScriptDispIdEx; //"FindProxyForURLEx"
+    DISPID      ScriptDispIdEx; //"FindProxyForURLEx"; -1, if not exists.
     BOOL    bWinsockInitialized;
     DWORD v14;  //s_hJScriptModuleHandle? No!
     DWORD   dwTickCount;
@@ -541,9 +541,12 @@ CScriptSite* restoreCScriptSite(CScriptSite *pCScriptSite)
     return pCScriptSite;
 }
 
-int InternetGetProxyInfoEx_X_dbg(CScriptSite *pCScriptSite, void *lpAutoProxyScriptBuffer, FARPROC pInternetGetProxyInfoEx, void *purl, void *phost, void **ppproxy)
+int InternetGetProxyInfoEx_X_dbg(CScriptSite *pCScriptSite, void *lpAutoProxyScriptBuffer,
+    FARPROC pInternetGetProxyInfoEx, void *purl, DWORD url_len, void *phost, DWORD host_len, void **ppproxy, LPDWORD proxy_len)
 {
     int ret;
+    LARGE_INTEGER c1, c2, Freq;
+    QueryPerformanceFrequency(&Freq);
     //
     hackCScriptSite(pCScriptSite);
     // 'ParseScriptText' AGAIN using new OnScriptError hack
@@ -551,32 +554,20 @@ int InternetGetProxyInfoEx_X_dbg(CScriptSite *pCScriptSite, void *lpAutoProxyScr
             lpAutoProxyScriptBuffer, NULL, NULL, NULL, 0, 0, SCRIPTTEXT_ISEXPRESSION|SCRIPTTEXT_ISVISIBLE, NULL, NULL)
         != S_OK ) {return 1;}
     //
-    ret = pInternetGetProxyInfoEx(pCScriptSite, purl, phost, ppproxy);
+    QueryPerformanceCounter(&c1);
+    if (url_len) {
+        ret = pInternetGetProxyInfoEx(pCScriptSite, purl, url_len, phost, host_len, ppproxy, proxy_len); // Stub
+    }
+    else {
+        ret = pInternetGetProxyInfoEx(pCScriptSite, purl, phost, ppproxy);
+    }
     if (ret) {
         fprintf(stderr, "InternetGetProxyInfoEx failed: %d\n", ret);
         return 1;
     }
-    //
-    restoreCScriptSite(pCScriptSite);
-    return 0;
-}
-
-int InternetGetProxyInfoEx_Stub_dbg(CScriptSite *pCScriptSite, void *lpAutoProxyScriptBuffer,
-    FARPROC pInternetGetProxyInfoEx_Stub, void *purl, DWORD url_len, void *phost, DWORD host_len, void **ppproxy, LPDWORD proxy_len)
-{
-    int ret;
-    //
-    hackCScriptSite(pCScriptSite);
-    // 'ParseScriptText' AGAIN using new OnScriptError hack
-    if ( pCScriptSite->pIActiveScriptParse->lpVtbl->ParseScriptText(pCScriptSite->pIActiveScriptParse,
-            lpAutoProxyScriptBuffer, NULL, NULL, NULL, 0, 0, SCRIPTTEXT_ISEXPRESSION|SCRIPTTEXT_ISVISIBLE, NULL, NULL)
-        != S_OK ) {return 1;}
-    //
-    ret = pInternetGetProxyInfoEx_Stub(pCScriptSite, purl, url_len, phost, host_len, ppproxy, proxy_len);
-    if (ret) {
-        fprintf(stderr, "InternetGetProxyInfoEx failed: %d\n", ret);
-        return 1;
-    }
+    QueryPerformanceCounter(&c2);
+    printf(pCScriptSite->ScriptDispIdEx == -1 ? "FindProxyForURL" : "FindProxyForURLEx");
+    printf(": %.12f(s)\n", (float)(c2.QuadPart-c1.QuadPart)/Freq.QuadPart);
     //
     restoreCScriptSite(pCScriptSite);
     return 0;
@@ -677,7 +668,7 @@ int main(int argc, char** argv)
             fprintf(stderr, "InternetInitializeAutoProxyDllEx failed: %d\n", ret);
             goto ERR;
         }
-        if ( InternetGetProxyInfoEx_X_dbg(pCScriptSite, lpAutoProxyScriptBuffer_w, pIGPIEx, url_w, host_w, &proxy_w) ) {
+        if ( InternetGetProxyInfoEx_X_dbg(pCScriptSite, lpAutoProxyScriptBuffer_w, pIGPIEx, url_w, 0, host_w, 0, &proxy_w, NULL) ) {
             goto ERR;
         }
         //
@@ -695,10 +686,10 @@ int main(int argc, char** argv)
         }
         // debug
         if (aProductVersion[0] == 9) {
-            ret = InternetGetProxyInfoEx_X_dbg(pCScriptSite, lpAutoProxyScriptBuffer_w, pIGPIEx, url, host, &proxy);
+            ret = InternetGetProxyInfoEx_X_dbg(pCScriptSite, lpAutoProxyScriptBuffer_w, pIGPIEx, url, 0, host, 0, &proxy, NULL);
         } else {
             int proxy_len;
-            ret = InternetGetProxyInfoEx_Stub_dbg(pCScriptSite, lpAutoProxyScriptBuffer_w, pIGPIEx, url, strlen(url), host, strlen(host), &proxy, &proxy_len);
+            ret = InternetGetProxyInfoEx_X_dbg(pCScriptSite, lpAutoProxyScriptBuffer_w, pIGPIEx, url, strlen(url), host, strlen(host), &proxy, &proxy_len);
         }
         if (ret) { goto ERR; }
         //
