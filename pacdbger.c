@@ -220,6 +220,7 @@ CScriptSite::`scalar deleting destructor'(uint)
 #include <windows.h>
 #include <ole2.h>
 #include <wininet.h>
+#include <sys/stat.h>
 
 
 typedef AutoProxyHelperFunctions AUTO_PROXY_HELPER_APIS;
@@ -374,7 +375,10 @@ typedef int (CALLBACK *pfnInternetInitializeAutoProxyDllEx)
     _IN_        DWORD dwReserved,               // not used
     _IN_        DWORD a2,  // CJSProxy.v26, ?
     _OUT_       void *lptszDownloadedTempFile,  // v11/v10: LPWSTR; v8/v9: LPSTR
-    _IN_OPT_    VARIANT *varScript,             // the script text, 
+    _IN_OPT_    VARIANT *varScript,     // the script text; oaidl.h.
+                                        // v11/v10: vt = 8, v9/v8: vt = 12;
+                                        // wReserved1 = 0, wReserved2 wReserved3 is bstrVal
+                                        // bstrVal != 0  is the contents
     _OUT_       CScriptSite **ppCScriptSite,    // CScriptSite::CScriptSite(V9)
     _OUT_OPT_   void *lptAutoProxyScriptBuffer  // v11/v10: LPWSTR; v8/v9: LPSTR
 );
@@ -573,6 +577,35 @@ int InternetGetProxyInfoEx_X_dbg(CScriptSite *pCScriptSite, void *lpAutoProxyScr
     return 0;
 }
 
+static size_t read_file(FILE* fp, unsigned char** output) {
+    size_t smart_size, count;
+    size_t length = 0;
+    //make it faster
+    if (!fp) { //incase
+        return 0;
+    }
+    else if (fp == stdin) {
+        smart_size = stdin->_bufsiz;
+    }
+    else { //unreliable for stdin!
+        struct stat filestats;
+        int fd = fileno(fp);
+        fstat(fd, &filestats);
+        smart_size = filestats.st_size + 1; // +1 to get EOF, BIG file
+    }
+    //
+    *output = calloc(1, 1); //just in case
+    while (!feof(fp)) {
+        *output = realloc(*output, length + smart_size + sizeof(wchar_t));
+        count = fread(*output + length, 1, smart_size, fp);
+        memset(*output + length + count, 0, sizeof(wchar_t)); // append 0, in case of wide char
+        length += count;
+    }
+    *output = realloc(*output, length + sizeof(wchar_t));
+    //
+    return length;
+}
+
 
 //int _tmain(int argc, _TCHAR** argv)
 int main(int argc, char** argv)
@@ -587,8 +620,12 @@ int main(int argc, char** argv)
     HRESULT hr;
     char MBCP[8];
     //
-    char     *pacpath, *url, *host, *proxy, *lpAutoProxyScriptBuffer;
-    wchar_t     *pacpath_w, *url_w, *host_w, *proxy_w, *lpAutoProxyScriptBuffer_w;
+    char    *pacpath, *url, *host, *proxy, *lpAutoProxyScriptBuffer;
+    wchar_t *url_w, *host_w, *proxy_w, *lpAutoProxyScriptBuffer_w;
+    BSTR bScript = NULL;
+    VARIANT varScript;
+    FILE *fp;
+    size_t len;
     char  pFilename[MAX_PATH + 1], *ProductVersion;
     int *aProductVersion = NULL; // 4 elems in array
     int CP, ret;
@@ -607,10 +644,6 @@ int main(int argc, char** argv)
     //
     ret = 0;
     pacpath = argv[1];
-    if (cs_to_utf16(CP, pacpath, &pacpath_w) <= 0) {
-        fprintf(stderr, "Can't convert pacpath to UTF-16!\n");
-        goto ERR;
-    }
     url = argv[2];
     if (cs_to_utf16(CP, url, &url_w) <= 0) {
         fprintf(stderr, "Can't convert url to UTF-16!\n");
@@ -623,6 +656,22 @@ int main(int argc, char** argv)
     }
     if (cs_to_utf16(CP, host, &host_w) <= 0) {
         fprintf(stderr, "Can't convert host to UTF-16!\n");
+        goto ERR;
+    }
+    fp = fopen(pacpath, "rb");
+    if (!fp) {
+        fprintf(stderr, "Can't open file: %s\n", pacpath);
+        goto ERR;
+    }
+    len = read_file(fp, &lpAutoProxyScriptBuffer);
+    fclose(fp);
+    if (!len) {
+        fprintf(stderr, "Empty file: %s\n", pacpath);
+        goto ERR;
+    }
+    // Extra: wchar_t needed for jscript!
+    if (cs_to_utf16(CP, lpAutoProxyScriptBuffer, &lpAutoProxyScriptBuffer_w) <= 0) {
+        fprintf(stderr, "Can't convert AutoProxyScriptBuffer to UTF-16!\n");
         goto ERR;
     }
     //
@@ -659,12 +708,17 @@ int main(int argc, char** argv)
         goto ERR;
     }
     //
-    // Can we hack 'OnScriptError' before initializing? Must do ...!
-    // Actually, we parse the script 1 more time to get the errors :P
+    // Can we hack 'OnScriptError' before initializing? ...
+    // Actually, we initialize the ScriptSite with a dummy script, hack, and then parse the script to get the errors ^_^
+    bScript = SysAllocString(L"function FindProxyForURL(url,host){}"); // total time, faster
+    varScript.bstrVal = bScript;
+    varScript.wReserved1 = 0; // It will compare DWORD.
+    *((DWORD*)&(varScript.wReserved2)) = (DWORD)bScript; // let's overwrite
     // For all supported versions
     if (aProductVersion[0] >= 10) {
-        ret = pIIAPDEx(0, 0, pacpath_w, NULL, &pCScriptSite, &lpAutoProxyScriptBuffer_w);
-        if (ret) { // try char for v9/v8 in case, almost the same as parent process for v10/v11.
+        varScript.vt = 8;
+        ret = pIIAPDEx(0, 0, NULL, &varScript, &pCScriptSite, NULL);
+        if (ret) {
             fprintf(stderr, "InternetInitializeAutoProxyDllEx failed: %d\n", ret);
             goto ERR;
         }
@@ -673,18 +727,15 @@ int main(int argc, char** argv)
         }
         //
         wprintf(L"%s\n", proxy_w);
+        GlobalFree(proxy_w);
     } else {
-        ret = pIIAPDEx(0, 0, pacpath, NULL, &pCScriptSite, &lpAutoProxyScriptBuffer);
+        varScript.vt = 12;
+        ret = pIIAPDEx(0, 0, NULL, &varScript, &pCScriptSite, NULL);
         if (ret) {
             fprintf(stderr, "InternetInitializeAutoProxyDllEx failed: %d\n", ret);
             goto ERR;
         }
-        // Extra: wchar_t needed for jscript!
-        if (cs_to_utf16(CP, lpAutoProxyScriptBuffer, &lpAutoProxyScriptBuffer_w) <= 0) {
-            fprintf(stderr, "Can't convert AutoProxyScriptBuffer to UTF-16!\n");
-            goto ERR;
-        }
-        // debug
+        // branch
         if (aProductVersion[0] == 9) {
             ret = InternetGetProxyInfoEx_X_dbg(pCScriptSite, lpAutoProxyScriptBuffer_w, pIGPIEx, url, 0, host, 0, &proxy, NULL);
         } else {
@@ -694,6 +745,7 @@ int main(int argc, char** argv)
         if (ret) { goto ERR; }
         //
         printf("%s\n", proxy);
+        GlobalFree(proxy);
     }
     //
 GOT:
@@ -702,14 +754,12 @@ GOT:
     //
 CLEAN:
     // pacpath and url don't need free
-    free(pacpath_w);
     free(url_w);
     free(host);
     free(host_w);
-    GlobalFree(proxy);
-    GlobalFree(proxy_w);
-    GlobalFree(lpAutoProxyScriptBuffer);
-    GlobalFree(lpAutoProxyScriptBuffer_w);
+    if (bScript) SysFreeString(bScript);
+    free(lpAutoProxyScriptBuffer);
+    free(lpAutoProxyScriptBuffer_w);
     FreeLibrary(hModJSP);
     //
     return ret;
