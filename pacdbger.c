@@ -549,14 +549,31 @@ int InternetGetProxyInfoEx_X_dbg(CScriptSite *pCScriptSite, void *lpAutoProxyScr
     FARPROC pInternetGetProxyInfoEx, void *purl, DWORD url_len, void *phost, DWORD host_len, void **ppproxy, LPDWORD proxy_len)
 {
     int ret;
+    OLECHAR *lpFindProxyForURL = L"FindProxyForURL";
+    OLECHAR *lpFindProxyForURLEx = L"FindProxyForURLEx";
     LARGE_INTEGER c1, c2, Freq;
     QueryPerformanceFrequency(&Freq);
     //
     hackCScriptSite(pCScriptSite);
     // 'ParseScriptText' AGAIN using new OnScriptError hack
-    if ( pCScriptSite->pIActiveScriptParse->lpVtbl->ParseScriptText(pCScriptSite->pIActiveScriptParse,
-            lpAutoProxyScriptBuffer, NULL, NULL, NULL, 0, 0, SCRIPTTEXT_ISEXPRESSION|SCRIPTTEXT_ISVISIBLE, NULL, NULL)
-        != S_OK ) {return 1;}
+    if (pCScriptSite->pIActiveScriptParse->lpVtbl->ParseScriptText(pCScriptSite->pIActiveScriptParse,
+		lpAutoProxyScriptBuffer, NULL, NULL, NULL, 0, 0,
+		SCRIPTTEXT_ISEXPRESSION|SCRIPTTEXT_ISVISIBLE, NULL, NULL) != S_OK)
+	{return 1;}
+    // Relocate the pac entry, as new script parsed
+    if (pCScriptSite->pJScriptDisp->lpVtbl->GetIDsOfNames(pCScriptSite->pJScriptDisp,
+		&GUID_NULL, &lpFindProxyForURL, 1, LOCALE_SYSTEM_DEFAULT, &pCScriptSite->ScriptDispId) != S_OK)
+	{
+		pCScriptSite->ScriptDispId = -1;
+		if (pCScriptSite->pJScriptDisp->lpVtbl->GetIDsOfNames(pCScriptSite->pJScriptDisp,
+			&GUID_NULL, &lpFindProxyForURLEx, 1, LOCALE_SYSTEM_DEFAULT, &pCScriptSite->ScriptDispId) != S_OK)
+		{
+			fprintf(stderr, "error: %d\n", GetLastError() );
+			pCScriptSite->ScriptDispIdEx = -1;
+			fwprintf(stderr, L"%s/%s Not found!\n", lpFindProxyForURL, lpFindProxyForURLEx);
+			return 1;
+		}
+	}
     //
     QueryPerformanceCounter(&c1);
     if (url_len) {
@@ -570,7 +587,7 @@ int InternetGetProxyInfoEx_X_dbg(CScriptSite *pCScriptSite, void *lpAutoProxyScr
         return 1;
     }
     QueryPerformanceCounter(&c2);
-    printf(pCScriptSite->ScriptDispIdEx == -1 ? "FindProxyForURL" : "FindProxyForURLEx");
+    wprintf(pCScriptSite->ScriptDispIdEx == -1 ? lpFindProxyForURL : lpFindProxyForURLEx);
     printf(": %.12f(s)\n", (float)(c2.QuadPart-c1.QuadPart)/Freq.QuadPart);
     //
     restoreCScriptSite(pCScriptSite);
@@ -728,7 +745,8 @@ int main(int argc, char** argv)
         //
         wprintf(L"%s\n", proxy_w);
         GlobalFree(proxy_w);
-    } else {
+    }
+    else {
         varScript.vt = 12;
         ret = pIIAPDEx(0, 0, NULL, &varScript, &pCScriptSite, NULL);
         if (ret) {
@@ -738,7 +756,8 @@ int main(int argc, char** argv)
         // branch
         if (aProductVersion[0] == 9) {
             ret = InternetGetProxyInfoEx_X_dbg(pCScriptSite, lpAutoProxyScriptBuffer_w, pIGPIEx, url, 0, host, 0, &proxy, NULL);
-        } else {
+        }
+        else {
             int proxy_len;
             ret = InternetGetProxyInfoEx_X_dbg(pCScriptSite, lpAutoProxyScriptBuffer_w, pIGPIEx, url, strlen(url), host, strlen(host), &proxy, &proxy_len);
         }
