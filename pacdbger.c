@@ -526,6 +526,8 @@ HRESULT STDMETHODCALLTYPE CScriptSite_OnScriptError_Hack(CScriptSite *pCScriptSi
 IActiveScriptSiteVtbl   IActiveScriptSiteVtbl_hack;  // keep it, global
 IActiveScriptSiteVtbl   *pIActiveScriptSiteVtbl_bak; // for releasing
 
+int N_QUERIES = 1;
+
 CScriptSite* hackCScriptSite(CScriptSite *pCScriptSite)
 {
     // key: *(pCScriptSite->pIActiveScriptSiteVtbl)
@@ -548,7 +550,7 @@ CScriptSite* restoreCScriptSite(CScriptSite *pCScriptSite)
 int InternetGetProxyInfoEx_X_dbg(CScriptSite *pCScriptSite, void *lpAutoProxyScriptBuffer,
     FARPROC pInternetGetProxyInfoEx, void *purl, DWORD url_len, void *phost, DWORD host_len, void **ppproxy, LPDWORD proxy_len)
 {
-    int ret;
+    int n_queries, ret;
     OLECHAR *lpFindProxyForURL = L"FindProxyForURL";
     OLECHAR *lpFindProxyForURLEx = L"FindProxyForURLEx";
     LARGE_INTEGER c1, c2, Freq;
@@ -575,20 +577,23 @@ int InternetGetProxyInfoEx_X_dbg(CScriptSite *pCScriptSite, void *lpAutoProxyScr
 		}
 	}
     //
+    n_queries = N_QUERIES;
     QueryPerformanceCounter(&c1);
-    if (url_len) {
-        ret = pInternetGetProxyInfoEx(pCScriptSite, purl, url_len, phost, host_len, ppproxy, proxy_len); // Stub
-    }
-    else {
-        ret = pInternetGetProxyInfoEx(pCScriptSite, purl, phost, ppproxy);
-    }
-    if (ret) {
-        fprintf(stderr, "InternetGetProxyInfoEx failed: %d\n", ret);
-        return 1;
+    while (n_queries-- > 0) {
+		if (url_len) {
+			ret = pInternetGetProxyInfoEx(pCScriptSite, purl, url_len, phost, host_len, ppproxy, proxy_len); // Stub
+		}
+		else {
+			ret = pInternetGetProxyInfoEx(pCScriptSite, purl, phost, ppproxy);
+		}
+		if (ret) {
+			fprintf(stderr, "InternetGetProxyInfoEx failed: %d [%d]\n", ret, N_QUERIES - n_queries);
+			return 1;
+		}
     }
     QueryPerformanceCounter(&c2);
     wprintf(pCScriptSite->ScriptDispIdEx == -1 ? lpFindProxyForURL : lpFindProxyForURLEx);
-    printf(": %.12f(s)\n", (float)(c2.QuadPart-c1.QuadPart)/Freq.QuadPart);
+    printf(": %.12f(s) [%d]\n", (float)(c2.QuadPart-c1.QuadPart)/Freq.QuadPart, N_QUERIES);
     //
     restoreCScriptSite(pCScriptSite);
     return 0;
@@ -623,7 +628,6 @@ static size_t read_file(FILE* fp, unsigned char** output) {
     return length;
 }
 
-
 //int _tmain(int argc, _TCHAR** argv)
 int main(int argc, char** argv)
 {
@@ -647,10 +651,10 @@ int main(int argc, char** argv)
     int *aProductVersion = NULL; // 4 elems in array
     int CP, ret;
     //
-    if (argc != 3) {
+    if (argc < 3) {
         fprintf(stderr, "PAC file debugger. v0.1.0 @lifenjoiner #20171002\n");
         fprintf(stderr, "This program insists the same capability as the windows OS, and printing the position where error ocured!\n");
-        fprintf(stderr, "Usage: %s <pac-file> <url>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <pac-file> <url> [n-queries < %d]\n", argv[0], (1<<(sizeof(int)*8-1))-1);
         fprintf(stderr, "Tips: When the script has dead loops, you'd better use IE's DevTools. And that's why this program is named dbger.\n");
         return 1;
     }
@@ -691,6 +695,11 @@ int main(int argc, char** argv)
         fprintf(stderr, "Can't convert AutoProxyScriptBuffer to UTF-16!\n");
         goto ERR;
     }
+	//
+	if (argc > 3) {
+		N_QUERIES = atoi(argv[3]);
+		if (N_QUERIES < 1) N_QUERIES = 1;
+	}
     //
     hModJSP = LoadLibrary( TEXT("jsproxy") );
     if (!hModJSP) {
