@@ -207,8 +207,8 @@ CScriptSite::`scalar deleting destructor'(uint)
 
 // At last we got the following codes achieving the goal!
 
-// x86: cl.exe /Os /MD *.c Ole32.lib Version.lib
-// x64: cl.exe /Os /MD *.c Ole32.lib Version.lib bufferoverflowU.lib
+// x86: cl.exe /Os /MD *.c Ole32.lib OleAut32.lib Version.lib
+// x64: cl.exe /Os /MD *.c Ole32.lib OleAut32.lib Version.lib bufferoverflowU.lib
 
 #define _WIN32_WINNT 0x0501 // XP, 0x0601: Windows 7. structs for API
 
@@ -370,15 +370,25 @@ others: https://en.wikipedia.org/wiki/Internet_Explorer#History
 // Initializing the COM yourself!
 // We declare the 3(4) APIs, but may not use them, just keep the types in mind when using them :)
 // v11/v10: LPWSTR; v8/v9: LPSTR
+typedef struct _SCRIPTBUFF_X {
+	size_t size_self;
+	void  *pStr;
+	INT32 len_buffer; // ?
+/*
+#if _IE_VER > 9 // Just for reading
+	LPWSTR  pStr;
+#else
+	LPSTR pStr;
+	INT32 len_buffer; // ?
+*/
+} SCRIPTBUFF_X;
+
 typedef int (CALLBACK *pfnInternetInitializeAutoProxyDllEx)
 (
     _IN_        DWORD dwReserved,               // not used
     _IN_        DWORD a2,  // CJSProxy.v26, ?
     _OUT_       void *lptszDownloadedTempFile,  // v11/v10: LPWSTR; v8/v9: LPSTR
-    _IN_OPT_    VARIANT *varScript,     // the script text; oaidl.h.
-                                        // v11/v10: vt = 8, v9/v8: vt = 12;
-                                        // wReserved1 = 0, wReserved2 wReserved3 is bstrVal
-                                        // bstrVal != 0  is the contents
+    _IN_OPT_    void *ScriptBuff,     //SCRIPTBUFF
     _OUT_       CScriptSite **ppCScriptSite,    // CScriptSite::CScriptSite(V9)
     _OUT_OPT_   void *lptAutoProxyScriptBuffer  // v11/v10: LPWSTR; v8/v9: LPSTR
 );
@@ -577,9 +587,9 @@ int InternetGetProxyInfoEx_X_dbg(CScriptSite *pCScriptSite, void *lpAutoProxyScr
 		}
 	}
     //
-    n_queries = N_QUERIES;
+    n_queries = 0;
     QueryPerformanceCounter(&c1);
-    while (n_queries-- > 0) {
+    while (n_queries++ < N_QUERIES) {
 		if (url_len) {
 			ret = pInternetGetProxyInfoEx(pCScriptSite, purl, url_len, phost, host_len, ppproxy, proxy_len); // Stub
 		}
@@ -587,7 +597,7 @@ int InternetGetProxyInfoEx_X_dbg(CScriptSite *pCScriptSite, void *lpAutoProxyScr
 			ret = pInternetGetProxyInfoEx(pCScriptSite, purl, phost, ppproxy);
 		}
 		if (ret) {
-			fprintf(stderr, "InternetGetProxyInfoEx failed: %d [%d]\n", ret, N_QUERIES - n_queries);
+			fprintf(stderr, "InternetGetProxyInfoEx failed: %d [%d]\n", ret, n_queries);
 			return 1;
 		}
     }
@@ -643,8 +653,7 @@ int main(int argc, char** argv)
     //
     char    *pacpath, *url, *host, *proxy, *lpAutoProxyScriptBuffer;
     wchar_t *url_w, *host_w, *proxy_w, *lpAutoProxyScriptBuffer_w;
-    BSTR bScript = NULL;
-    VARIANT varScript;
+    SCRIPTBUFF_X ScriptBuff;
     FILE *fp;
     size_t len;
     char  pFilename[MAX_PATH + 1], *ProductVersion;
@@ -736,14 +745,12 @@ int main(int argc, char** argv)
     //
     // Can we hack 'OnScriptError' before initializing? ...
     // Actually, we initialize the ScriptSite with a dummy script, hack, and then parse the script to get the errors ^_^
-    bScript = SysAllocString(L"function FindProxyForURL(url,host){}"); // total time, faster
-    varScript.bstrVal = bScript;
-    varScript.wReserved1 = 0; // It will compare DWORD.
-    *((DWORD*)&(varScript.wReserved2)) = (DWORD)bScript; // let's overwrite
     // For all supported versions
     if (aProductVersion[0] >= 10) {
-        varScript.vt = 8;
-        ret = pIIAPDEx(0, 0, NULL, &varScript, &pCScriptSite, NULL);
+        ScriptBuff.size_self = 8;
+		ScriptBuff.pStr = L"function FindProxyForURL(url,host){}"; // total time, faster
+		ScriptBuff.len_buffer = 0; // not used
+        ret = pIIAPDEx(0, 0, NULL, &ScriptBuff, &pCScriptSite, NULL);
         if (ret) {
             fprintf(stderr, "InternetInitializeAutoProxyDllEx failed: %d\n", ret);
             goto ERR;
@@ -753,11 +760,13 @@ int main(int argc, char** argv)
         }
         //
         wprintf(L"%s\n", proxy_w);
-        GlobalFree(proxy_w);
+        GlobalFree(proxy_w); // v9/v8 GlobalFree, also works for v11/v10 CoTaskMemFree
     }
     else {
-        varScript.vt = 12;
-        ret = pIIAPDEx(0, 0, NULL, &varScript, &pCScriptSite, NULL);
+        ScriptBuff.size_self = 12;
+		ScriptBuff.pStr = "function FindProxyForURL(url,host){}"; // total time, faster
+		ScriptBuff.len_buffer = 36; // for solid script
+        ret = pIIAPDEx(0, 0, NULL, &ScriptBuff, &pCScriptSite, NULL);
         if (ret) {
             fprintf(stderr, "InternetInitializeAutoProxyDllEx failed: %d\n", ret);
             goto ERR;
@@ -785,7 +794,6 @@ CLEAN:
     free(url_w);
     free(host);
     free(host_w);
-    if (bScript) SysFreeString(bScript);
     free(lpAutoProxyScriptBuffer);
     free(lpAutoProxyScriptBuffer_w);
     FreeLibrary(hModJSP);
