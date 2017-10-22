@@ -1,5 +1,6 @@
+/* license: MIT */
 /* pacdbger
-This program insists the same capability as the windows OS, and printing the position where error ocured!
+This program insists the same capability as the windows OS, and prints the position where error ocured!
 
 ***
 MS should make jsproxy to a standalone pac debugging tool :)
@@ -661,7 +662,7 @@ int main(int argc, char** argv)
     int CP, ret;
     //
     if (argc < 3) {
-        fprintf(stderr, "PAC file debugger. v0.1.0 @lifenjoiner #20171002\n");
+        fprintf(stderr, "PAC file debugger. v0.1.2 @lifenjoiner #20171002\n");
         fprintf(stderr, "This program insists the same capability as the windows OS, and printing the position where error ocured!\n");
         fprintf(stderr, "Usage: %s <pac-file> <url> [n-queries < %d]\n", argv[0], (1<<(sizeof(int)*8-1))-1);
         fprintf(stderr, "Tips: When the script has dead loops, you'd better use IE's DevTools. And that's why this program is named dbger.\n");
