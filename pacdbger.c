@@ -662,9 +662,9 @@ int main(int argc, char** argv)
     int CP, ret;
     //
     if (argc < 3) {
-        fprintf(stderr, "PAC file debugger. v0.1.2 @lifenjoiner #20171002\n");
+        fprintf(stderr, "PAC file debugger. v0.1.3 #20200726 @lifenjoiner (c) 2017 - now\n");
         fprintf(stderr, "This program insists the same capability as the windows OS, and printing the position where error ocured!\n");
-        fprintf(stderr, "Usage: %s <pac-file> <url> [n-queries < %d]\n", argv[0], (1<<(sizeof(int)*8-1))-1);
+        fprintf(stderr, "Usage: %s <pac-file> <url> [n-queries <= int max]\n", argv[0]);
         fprintf(stderr, "Tips: When the script has dead loops, you'd better use IE's DevTools. And that's why this program is named dbger.\n");
         return 1;
     }
@@ -748,7 +748,7 @@ int main(int argc, char** argv)
     // Actually, we initialize the ScriptSite with a dummy script, hack, and then parse the script to get the errors ^_^
     // For all supported versions
     if (aProductVersion[0] >= 10) {
-        ScriptBuff.size_self = 8;
+        ScriptBuff.size_self = 2 * sizeof(size_t);
 		ScriptBuff.pStr = L"function FindProxyForURL(url,host){}"; // total time, faster
 		ScriptBuff.len_buffer = 0; // not used
         ret = pIIAPDEx(0, 0, NULL, &ScriptBuff, &pCScriptSite, NULL);
@@ -764,7 +764,7 @@ int main(int argc, char** argv)
         GlobalFree(proxy_w); // v9/v8 GlobalFree, also works for v11/v10 CoTaskMemFree
     }
     else {
-        ScriptBuff.size_self = 12;
+        ScriptBuff.size_self =  3 * sizeof(size_t);
 		ScriptBuff.pStr = "function FindProxyForURL(url,host){}"; // total time, faster
 		ScriptBuff.len_buffer = 36; // for solid script
         ret = pIIAPDEx(0, 0, NULL, &ScriptBuff, &pCScriptSite, NULL);
